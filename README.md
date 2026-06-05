@@ -21,8 +21,6 @@ npm run dev:backend
 npm run dev:frontend
 ```
 
-Frontend: http://localhost:5173
-
-Backend API: http://127.0.0.1:8000/docs
+Frontend: (https://shipypro.vercel.app/)
 
 The frontend includes local fallback data, so the product UI remains usable if the backend is not running.
