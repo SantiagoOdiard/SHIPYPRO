@@ -1,0 +1,11 @@
+{
+  "name": "shippypro-ai-logistics-copilot",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Full-stack SaaS demo for logistics intelligence with React, FastAPI, analytics and AI-ready insights.",
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:frontend": "npm --prefix frontend run build",
+    "dev:backend": "python -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000"
+  }
+}
