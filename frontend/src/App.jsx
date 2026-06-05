@@ -585,156 +585,118 @@ function Returns({ data }) {
 }
 
 function Assistant({ data }) {
-  const [question, setQuestion] = useState("Dove stiamo perdendo soldi?");
-  const [answer, setAnswer] = useState(data.assistantAnswer);
+  const [draft, setDraft] = useState("");
+  const [messages, setMessages] = useState([
+    {
+      role: "assistant",
+      content: "Ciao Andrea, sono il tuo Logistics Copilot. Posso analizzare spedizioni, ritardi, resi, costi e carrier. Chiedimi pure qualcosa, come faresti con ChatGPT.",
+    },
+  ]);
   const [isThinking, setIsThinking] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setAnswer(data.assistantAnswer);
-  }, [data.assistantAnswer]);
+  const [mode, setMode] = useState("ready");
 
   async function handleSubmit(event) {
     event.preventDefault();
-    const cleanQuestion = question.trim();
+    const cleanQuestion = draft.trim();
     if (!cleanQuestion || isThinking) return;
 
-    const localAnswer = buildLocalAssistantAnswer(cleanQuestion, data);
-    setAnswer(localAnswer);
+    const nextMessages = [...messages, { role: "user", content: cleanQuestion }];
+    setMessages(nextMessages);
+    setDraft("");
     setIsThinking(true);
-    setError("");
+    setMode("thinking");
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/assistant", {
+      const response = await fetch("/api/assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: cleanQuestion }),
+        body: JSON.stringify({
+          messages: nextMessages,
+          context: buildAssistantContext(data),
+        }),
       });
       if (!response.ok) throw new Error("API non disponibile");
       const payload = await response.json();
-      if (isStaleAssistantResponse(payload, cleanQuestion)) {
-        setError("Risposta aggiornata usando l'analisi locale del copilot.");
-      } else {
-        setAnswer({
-          analysis: payload.analysis,
-          data: payload.data,
-          action: payload.action,
-        });
-      }
+      setMessages((current) => [...current, { role: "assistant", content: payload.reply }]);
+      setMode(payload.mode === "openai" ? "openai" : "demo");
     } catch {
-      setError("Risposta generata in modalita demo locale.");
+      setMessages((current) => [
+        ...current,
+        {
+          role: "assistant",
+          content: "Non riesco a contattare l'AI in questo momento. Posso comunque aiutarti in modalita demo: chiedimi di costi, ritardi, carrier o spedizioni a rischio.",
+        },
+      ]);
+      setMode("demo");
     } finally {
       setIsThinking(false);
     }
   }
 
+  function usePrompt(prompt) {
+    setDraft(prompt);
+  }
+
   return (
-    <Page title="AI Assistant" subtitle="Copilot professionale per domande operative su performance, rischio e costo.">
-      <section className="assistant-page">
-        <form className="prompt-row" onSubmit={handleSubmit}>
-          <input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="Chiedi qualcosa sui tuoi dati logistici..." />
-          <button disabled={isThinking || !question.trim()}><Send size={17} /> {isThinking ? "Analizzo..." : "Analizza"}</button>
-        </form>
+    <Page title="AI Assistant" subtitle="Chat AI professionale per ragionare sui dati logistici come con ChatGPT.">
+      <section className="chat-shell">
+        <div className="chat-status">
+          <span className={mode === "openai" ? "live" : ""} />
+          {mode === "openai" ? "AI OpenAI attiva" : mode === "thinking" ? "Sto analizzando..." : "Demo AI pronta"}
+        </div>
+        <div className="chat-messages">
+          {messages.map((message, index) => (
+            <article key={`${message.role}-${index}`} className={`chat-message ${message.role}`}>
+              <div className="chat-avatar">{message.role === "assistant" ? <Bot size={18} /> : "AB"}</div>
+              <div className="chat-bubble">
+                {message.content.split("\n").map((line, lineIndex) => (
+                  <p key={`${index}-${lineIndex}`}>{line}</p>
+                ))}
+              </div>
+            </article>
+          ))}
+          {isThinking && (
+            <article className="chat-message assistant">
+              <div className="chat-avatar"><Bot size={18} /></div>
+              <div className="chat-bubble typing"><i /><i /><i /></div>
+            </article>
+          )}
+        </div>
         <div className="quick-prompts">
           {["Dove stiamo guadagnando soldi?", "Perche aumentano i ritardi?", "Quale corriere e piu efficiente?", "Dove stiamo perdendo soldi?", "Quali spedizioni sono a rischio?"].map((prompt) => (
-            <button key={prompt} onClick={() => setQuestion(prompt)}>{prompt}</button>
+            <button key={prompt} onClick={() => usePrompt(prompt)}>{prompt}</button>
           ))}
         </div>
-        {error && <p className="assistant-note">{error}</p>}
-        <div className="answer large">
-          <h3>Analisi</h3><p>{answer.analysis}</p>
-          <h3>Dati</h3><ul>{answer.data.map((item) => <li key={item}>{item}</li>)}</ul>
-          <h3>Azione consigliata</h3><p>{answer.action}</p>
-        </div>
+        <form className="chat-input" onSubmit={handleSubmit}>
+          <textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                handleSubmit(event);
+              }
+            }}
+            placeholder="Scrivi un messaggio al tuo copilot..."
+            rows={2}
+          />
+          <button disabled={isThinking || !draft.trim()}><Send size={18} /></button>
+        </form>
       </section>
     </Page>
   );
 }
 
-function buildLocalAssistantAnswer(question, data) {
-  const lowerQuestion = question.toLowerCase();
-  const worstCarrier = [...data.carriers].sort((a, b) => a.onTime - b.onTime)[0];
-  const bestCarrier = [...data.carriers].sort((a, b) => b.onTime - a.onTime)[0];
-  const cheapestReliableCarrier = [...data.carriers]
-    .filter((carrier) => carrier.onTime >= 85)
-    .sort((a, b) => a.avgCost - b.avgCost)[0] || bestCarrier;
-  const riskiestCountry = [...data.countryDelays].sort((a, b) => b.growth - a.growth)[0];
-  const delayedShipments = data.shipments.filter((shipment) => shipment.status.toLowerCase().includes("ritardo") || shipment.status.toLowerCase().includes("rischio"));
-
-  if (includesAny(lowerQuestion, ["guadagn", "profit", "margine", "rendendo", "migliori rotte", "miglior rotta"])) {
-    return {
-      analysis: `Stai guadagnando meglio dove il costo medio resta basso e la puntualita rimane alta. La combinazione piu forte e ${cheapestReliableCarrier.name}: costo medio EUR${cheapestReliableCarrier.avgCost.toFixed(2)} e ${cheapestReliableCarrier.onTime}% on time.`,
-      data: [
-        `${cheapestReliableCarrier.name}: miglior equilibrio margine/SLA`,
-        `Risparmio stimato mensile: EUR${data.costOptimizer.identifiedSaving.toLocaleString("it-IT")}`,
-        `${bestCarrier.name}: performance piu alta con ${bestCarrier.onTime}% on time`,
-      ],
-      action: `Aumenta il volume sulle tratte dove ${cheapestReliableCarrier.name} mantiene SLA alto e usa ${bestCarrier.name} per clienti premium o ordini ad alto valore.`,
-    };
-  }
-
-  if (lowerQuestion.includes("corriere") || lowerQuestion.includes("efficiente")) {
-    return {
-      analysis: `${bestCarrier.name} e il corriere piu efficiente nel periodo analizzato, con ${bestCarrier.onTime}% di consegne puntuali e rating ${bestCarrier.rating.toFixed(1)}.`,
-      data: [
-        `${bestCarrier.name}: ${bestCarrier.onTime}% on time`,
-        `${worstCarrier.name}: ${worstCarrier.onTime}% on time`,
-        `Differenza operativa: ${bestCarrier.onTime - worstCarrier.onTime} punti percentuali`,
-      ],
-      action: `Mantieni ${bestCarrier.name} sulle spedizioni premium e limita ${worstCarrier.name} alle rotte dove il costo e prioritario rispetto allo SLA.`,
-    };
-  }
-
-  if (includesAny(lowerQuestion, ["perd", "soldi", "costo", "costi", "risparm", "spreco", "pagando troppo"])) {
-    return {
-      analysis: "La perdita principale nasce da tratte economiche con bassa puntualita, che generano rimborsi, ticket customer care e seconde consegne.",
-      data: [
-        `Risparmio potenziale identificato: EUR${data.costOptimizer.identifiedSaving.toLocaleString("it-IT")}`,
-        `Costo totale monitorato: ${data.kpis.find((kpi) => kpi.label === "Costo Totale")?.value || "EUR128.430"}`,
-        `${worstCarrier.name} ha solo ${worstCarrier.onTime}% on time`,
-      ],
-      action: data.costOptimizer.recommendation,
-    };
-  }
-
-  if (lowerQuestion.includes("rischio")) {
-    return {
-      analysis: `Ci sono ${delayedShipments.length} spedizioni recenti con segnali di rischio o ritardo, concentrate soprattutto su ${riskiestCountry.country}.`,
-      data: [
-        `${riskiestCountry.country}: +${riskiestCountry.growth}% crescita ritardi`,
-        `${delayedShipments.length} spedizioni nel registro con stato critico`,
-        `${worstCarrier.name} e il carrier con performance piu debole`,
-      ],
-      action: "Apri escalation preventiva sui clienti premium e rialloca le prossime spedizioni verso carrier con SLA piu stabile.",
-    };
-  }
-
+function buildAssistantContext(data) {
   return {
-    analysis: `L'aumento dei ritardi e guidato da ${riskiestCountry.country} e dal calo performance di ${worstCarrier.name}.`,
-    data: [
-      `${riskiestCountry.country}: +${riskiestCountry.growth}% ritardi`,
-      `${worstCarrier.name}: ${worstCarrier.onTime}% consegne puntuali`,
-      `Alert predittivi attivi: ${data.alerts.length}`,
-    ],
-    action: `Riduci temporaneamente il volume su ${worstCarrier.name}, monitora ${riskiestCountry.country} ogni giorno e aggiorna le promesse di consegna sui checkout ad alto rischio.`,
+    kpis: data.kpis,
+    carriers: data.carriers,
+    countryDelays: data.countryDelays,
+    alerts: data.alerts,
+    recentShipments: data.shipments.slice(0, 8),
+    returns: data.returns,
+    costOptimizer: data.costOptimizer,
   };
-}
-
-function includesAny(text, terms) {
-  return terms.some((term) => text.includes(term));
-}
-
-function isStaleAssistantResponse(payload, question) {
-  const lowerQuestion = question.toLowerCase();
-  const analysis = String(payload?.analysis || "").toLowerCase();
-  const asksMoneyUpside = includesAny(lowerQuestion, ["guadagn", "profit", "margine"]);
-  const asksCarrier = includesAny(lowerQuestion, ["corriere", "efficiente"]);
-  const looksLikeOldDelayAnswer = analysis.includes("73% dei ritardi") || analysis.includes("carrier gls");
-
-  return (
-    looksLikeOldDelayAnswer &&
-    (asksMoneyUpside || asksCarrier || includesAny(lowerQuestion, ["soldi", "costo", "risparm", "rischio"]))
-  );
 }
 
 function Reports() {

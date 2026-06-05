@@ -24,3 +24,21 @@ npm run dev:frontend
 Frontend: (https://shipypro.vercel.app/)
 
 The frontend includes local fallback data, so the product UI remains usable if the backend is not running.
+
+## AI Assistant on Vercel
+
+The `/assistant` page includes a Vercel serverless endpoint at `/api/assistant`.
+
+To enable real OpenAI responses in production, add this environment variable in Vercel:
+
+```bash
+OPENAI_API_KEY=your_openai_api_key
+```
+
+Optional:
+
+```bash
+OPENAI_MODEL=gpt-5.2
+```
+
+If `OPENAI_API_KEY` is not configured, the assistant keeps working with a local logistics demo fallback.
