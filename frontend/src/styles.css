@@ -909,6 +909,33 @@ th {
   background: #14b8a6;
 }
 
+.prompt-row button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.quick-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.quick-prompts button {
+  min-height: 36px;
+  border: 1px solid rgba(45, 212, 191, 0.22);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: #99f6e4;
+  background: rgba(45, 212, 191, 0.08);
+}
+
+.assistant-note {
+  margin: 0;
+  color: #99f6e4;
+  font-size: 13px;
+  font-weight: 750;
+}
+
 .answer.large h3 {
   margin: 12px 0 7px;
 }

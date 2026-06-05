@@ -86,13 +86,85 @@ def shipments():
 
 @app.post("/api/assistant")
 def assistant(request: AssistantRequest):
-    answer = build_demo_data()["assistantAnswer"]
+    data = build_demo_data()
+    answer = build_assistant_answer(request.question, data)
     return {
         "question": request.question,
         "analysis": answer["analysis"],
         "data": answer["data"],
         "action": answer["action"],
         "model": "demo-logistics-intelligence",
+    }
+
+
+def build_assistant_answer(question: str, data: dict[str, Any]) -> dict[str, Any]:
+    lower_question = question.lower()
+    carriers = data["carriers"]
+    worst_carrier = sorted(carriers, key=lambda carrier: carrier["onTime"])[0]
+    best_carrier = sorted(carriers, key=lambda carrier: carrier["onTime"], reverse=True)[0]
+    reliable_carriers = [carrier for carrier in carriers if carrier["onTime"] >= 85]
+    cheapest_reliable_carrier = sorted(reliable_carriers or carriers, key=lambda carrier: carrier["avgCost"])[0]
+    riskiest_country = sorted(data["countryDelays"], key=lambda country: country["growth"], reverse=True)[0]
+    delayed_shipments = [
+        shipment
+        for shipment in data["shipments"]
+        if "ritardo" in shipment["status"].lower() or "rischio" in shipment["risk"].lower()
+    ]
+
+    if any(term in lower_question for term in ["guadagn", "profit", "margine", "rendendo", "migliori rotte", "miglior rotta"]):
+        optimizer = data["costOptimizer"]
+        return {
+            "analysis": f"Stai guadagnando meglio dove il costo medio resta basso e la puntualita rimane alta. La combinazione piu forte e {cheapest_reliable_carrier['name']}: costo medio EUR{cheapest_reliable_carrier['avgCost']:.2f} e {cheapest_reliable_carrier['onTime']}% on time.",
+            "data": [
+                f"{cheapest_reliable_carrier['name']}: miglior equilibrio margine/SLA",
+                f"Risparmio stimato mensile: EUR{optimizer['identifiedSaving']:,}".replace(",", "."),
+                f"{best_carrier['name']}: performance piu alta con {best_carrier['onTime']}% on time",
+            ],
+            "action": f"Aumenta il volume sulle tratte dove {cheapest_reliable_carrier['name']} mantiene SLA alto e usa {best_carrier['name']} per clienti premium o ordini ad alto valore.",
+        }
+
+    if "corriere" in lower_question or "efficiente" in lower_question:
+        return {
+            "analysis": f"{best_carrier['name']} e il corriere piu efficiente nel periodo analizzato, con {best_carrier['onTime']}% di consegne puntuali e rating {best_carrier['rating']:.1f}.",
+            "data": [
+                f"{best_carrier['name']}: {best_carrier['onTime']}% on time",
+                f"{worst_carrier['name']}: {worst_carrier['onTime']}% on time",
+                f"Differenza operativa: {best_carrier['onTime'] - worst_carrier['onTime']} punti percentuali",
+            ],
+            "action": f"Mantieni {best_carrier['name']} sulle spedizioni premium e limita {worst_carrier['name']} alle rotte dove il costo e prioritario rispetto allo SLA.",
+        }
+
+    if any(term in lower_question for term in ["perd", "soldi", "costo", "costi", "risparm", "spreco", "pagando troppo"]):
+        optimizer = data["costOptimizer"]
+        return {
+            "analysis": "La perdita principale nasce da tratte economiche con bassa puntualita, che generano rimborsi, ticket customer care e seconde consegne.",
+            "data": [
+                f"Risparmio potenziale identificato: EUR{optimizer['identifiedSaving']:,}".replace(",", "."),
+                "Costo totale monitorato: EUR128.430",
+                f"{worst_carrier['name']} ha solo {worst_carrier['onTime']}% on time",
+            ],
+            "action": optimizer["recommendation"],
+        }
+
+    if "rischio" in lower_question:
+        return {
+            "analysis": f"Ci sono {len(delayed_shipments)} spedizioni recenti con segnali di rischio o ritardo, concentrate soprattutto su {riskiest_country['country']}.",
+            "data": [
+                f"{riskiest_country['country']}: +{riskiest_country['growth']}% crescita ritardi",
+                f"{len(delayed_shipments)} spedizioni nel registro con stato critico",
+                f"{worst_carrier['name']} e il carrier con performance piu debole",
+            ],
+            "action": "Apri escalation preventiva sui clienti premium e rialloca le prossime spedizioni verso carrier con SLA piu stabile.",
+        }
+
+    return {
+        "analysis": f"L'aumento dei ritardi e guidato da {riskiest_country['country']} e dal calo performance di {worst_carrier['name']}.",
+        "data": [
+            f"{riskiest_country['country']}: +{riskiest_country['growth']}% ritardi",
+            f"{worst_carrier['name']}: {worst_carrier['onTime']}% consegne puntuali",
+            f"Alert predittivi attivi: {len(data['alerts'])}",
+        ],
+        "action": f"Riduci temporaneamente il volume su {worst_carrier['name']}, monitora {riskiest_country['country']} ogni giorno e aggiorna le promesse di consegna sui checkout ad alto rischio.",
     }
 
 

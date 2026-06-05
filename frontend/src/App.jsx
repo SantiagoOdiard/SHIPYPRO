@@ -25,7 +25,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import {
   Area,
@@ -586,11 +586,61 @@ function Returns({ data }) {
 
 function Assistant({ data }) {
   const [question, setQuestion] = useState("Dove stiamo perdendo soldi?");
-  const answer = useMemo(() => data.assistantAnswer, [data]);
+  const [answer, setAnswer] = useState(data.assistantAnswer);
+  const [isThinking, setIsThinking] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setAnswer(data.assistantAnswer);
+  }, [data.assistantAnswer]);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    const cleanQuestion = question.trim();
+    if (!cleanQuestion || isThinking) return;
+
+    const localAnswer = buildLocalAssistantAnswer(cleanQuestion, data);
+    setAnswer(localAnswer);
+    setIsThinking(true);
+    setError("");
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/api/assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: cleanQuestion }),
+      });
+      if (!response.ok) throw new Error("API non disponibile");
+      const payload = await response.json();
+      if (isStaleAssistantResponse(payload, cleanQuestion)) {
+        setError("Risposta aggiornata usando l'analisi locale del copilot.");
+      } else {
+        setAnswer({
+          analysis: payload.analysis,
+          data: payload.data,
+          action: payload.action,
+        });
+      }
+    } catch {
+      setError("Risposta generata in modalita demo locale.");
+    } finally {
+      setIsThinking(false);
+    }
+  }
+
   return (
     <Page title="AI Assistant" subtitle="Copilot professionale per domande operative su performance, rischio e costo.">
       <section className="assistant-page">
-        <div className="prompt-row"><input value={question} onChange={(e) => setQuestion(e.target.value)} /><button><Send size={17} /> Analizza</button></div>
+        <form className="prompt-row" onSubmit={handleSubmit}>
+          <input value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="Chiedi qualcosa sui tuoi dati logistici..." />
+          <button disabled={isThinking || !question.trim()}><Send size={17} /> {isThinking ? "Analizzo..." : "Analizza"}</button>
+        </form>
+        <div className="quick-prompts">
+          {["Dove stiamo guadagnando soldi?", "Perche aumentano i ritardi?", "Quale corriere e piu efficiente?", "Dove stiamo perdendo soldi?", "Quali spedizioni sono a rischio?"].map((prompt) => (
+            <button key={prompt} onClick={() => setQuestion(prompt)}>{prompt}</button>
+          ))}
+        </div>
+        {error && <p className="assistant-note">{error}</p>}
         <div className="answer large">
           <h3>Analisi</h3><p>{answer.analysis}</p>
           <h3>Dati</h3><ul>{answer.data.map((item) => <li key={item}>{item}</li>)}</ul>
@@ -598,6 +648,92 @@ function Assistant({ data }) {
         </div>
       </section>
     </Page>
+  );
+}
+
+function buildLocalAssistantAnswer(question, data) {
+  const lowerQuestion = question.toLowerCase();
+  const worstCarrier = [...data.carriers].sort((a, b) => a.onTime - b.onTime)[0];
+  const bestCarrier = [...data.carriers].sort((a, b) => b.onTime - a.onTime)[0];
+  const cheapestReliableCarrier = [...data.carriers]
+    .filter((carrier) => carrier.onTime >= 85)
+    .sort((a, b) => a.avgCost - b.avgCost)[0] || bestCarrier;
+  const riskiestCountry = [...data.countryDelays].sort((a, b) => b.growth - a.growth)[0];
+  const delayedShipments = data.shipments.filter((shipment) => shipment.status.toLowerCase().includes("ritardo") || shipment.status.toLowerCase().includes("rischio"));
+
+  if (includesAny(lowerQuestion, ["guadagn", "profit", "margine", "rendendo", "migliori rotte", "miglior rotta"])) {
+    return {
+      analysis: `Stai guadagnando meglio dove il costo medio resta basso e la puntualita rimane alta. La combinazione piu forte e ${cheapestReliableCarrier.name}: costo medio EUR${cheapestReliableCarrier.avgCost.toFixed(2)} e ${cheapestReliableCarrier.onTime}% on time.`,
+      data: [
+        `${cheapestReliableCarrier.name}: miglior equilibrio margine/SLA`,
+        `Risparmio stimato mensile: EUR${data.costOptimizer.identifiedSaving.toLocaleString("it-IT")}`,
+        `${bestCarrier.name}: performance piu alta con ${bestCarrier.onTime}% on time`,
+      ],
+      action: `Aumenta il volume sulle tratte dove ${cheapestReliableCarrier.name} mantiene SLA alto e usa ${bestCarrier.name} per clienti premium o ordini ad alto valore.`,
+    };
+  }
+
+  if (lowerQuestion.includes("corriere") || lowerQuestion.includes("efficiente")) {
+    return {
+      analysis: `${bestCarrier.name} e il corriere piu efficiente nel periodo analizzato, con ${bestCarrier.onTime}% di consegne puntuali e rating ${bestCarrier.rating.toFixed(1)}.`,
+      data: [
+        `${bestCarrier.name}: ${bestCarrier.onTime}% on time`,
+        `${worstCarrier.name}: ${worstCarrier.onTime}% on time`,
+        `Differenza operativa: ${bestCarrier.onTime - worstCarrier.onTime} punti percentuali`,
+      ],
+      action: `Mantieni ${bestCarrier.name} sulle spedizioni premium e limita ${worstCarrier.name} alle rotte dove il costo e prioritario rispetto allo SLA.`,
+    };
+  }
+
+  if (includesAny(lowerQuestion, ["perd", "soldi", "costo", "costi", "risparm", "spreco", "pagando troppo"])) {
+    return {
+      analysis: "La perdita principale nasce da tratte economiche con bassa puntualita, che generano rimborsi, ticket customer care e seconde consegne.",
+      data: [
+        `Risparmio potenziale identificato: EUR${data.costOptimizer.identifiedSaving.toLocaleString("it-IT")}`,
+        `Costo totale monitorato: ${data.kpis.find((kpi) => kpi.label === "Costo Totale")?.value || "EUR128.430"}`,
+        `${worstCarrier.name} ha solo ${worstCarrier.onTime}% on time`,
+      ],
+      action: data.costOptimizer.recommendation,
+    };
+  }
+
+  if (lowerQuestion.includes("rischio")) {
+    return {
+      analysis: `Ci sono ${delayedShipments.length} spedizioni recenti con segnali di rischio o ritardo, concentrate soprattutto su ${riskiestCountry.country}.`,
+      data: [
+        `${riskiestCountry.country}: +${riskiestCountry.growth}% crescita ritardi`,
+        `${delayedShipments.length} spedizioni nel registro con stato critico`,
+        `${worstCarrier.name} e il carrier con performance piu debole`,
+      ],
+      action: "Apri escalation preventiva sui clienti premium e rialloca le prossime spedizioni verso carrier con SLA piu stabile.",
+    };
+  }
+
+  return {
+    analysis: `L'aumento dei ritardi e guidato da ${riskiestCountry.country} e dal calo performance di ${worstCarrier.name}.`,
+    data: [
+      `${riskiestCountry.country}: +${riskiestCountry.growth}% ritardi`,
+      `${worstCarrier.name}: ${worstCarrier.onTime}% consegne puntuali`,
+      `Alert predittivi attivi: ${data.alerts.length}`,
+    ],
+    action: `Riduci temporaneamente il volume su ${worstCarrier.name}, monitora ${riskiestCountry.country} ogni giorno e aggiorna le promesse di consegna sui checkout ad alto rischio.`,
+  };
+}
+
+function includesAny(text, terms) {
+  return terms.some((term) => text.includes(term));
+}
+
+function isStaleAssistantResponse(payload, question) {
+  const lowerQuestion = question.toLowerCase();
+  const analysis = String(payload?.analysis || "").toLowerCase();
+  const asksMoneyUpside = includesAny(lowerQuestion, ["guadagn", "profit", "margine"]);
+  const asksCarrier = includesAny(lowerQuestion, ["corriere", "efficiente"]);
+  const looksLikeOldDelayAnswer = analysis.includes("73% dei ritardi") || analysis.includes("carrier gls");
+
+  return (
+    looksLikeOldDelayAnswer &&
+    (asksMoneyUpside || asksCarrier || includesAny(lowerQuestion, ["soldi", "costo", "risparm", "rischio"]))
   );
 }
 
